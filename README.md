@@ -6,7 +6,7 @@ Claude Desktop에서 사용할 수 있는 캘린더 및 리마인더 관리 MCP 
 
 ### 1. 프로젝트 클론
 ```bash
-git clone <repository-url>
+git clone https://github.com/waitonme/Claude_MCP_scheduler.git
 cd Claude_MCP_scheduler
 ```
 
@@ -40,45 +40,10 @@ Claude Desktop을 재시작하면 `scheduler-server`를 사용할 수 있습니�
 ### 시스템
 - **check_calendar_connection**: 캘린더 및 리마인더 연결 상태 확인
 
-## 🔧 수동 설정
-
-### 의존성 설치
-```bash
-npm install
-```
-
-### TypeScript 빌드
-```bash
-npx tsc
-```
-
-### MCP 서버 실행
-```bash
-npx tsx src/index.ts
-```
-
-## 📁 프로젝트 구조
-
-```
-src/
-├── app/           # 애플리케이션 메인
-├── calendar/      # 캘린더 관리
-├── core/          # 핵심 기능
-├── mcp/           # MCP 서버 핸들러
-├── server/        # 서버 관리
-├── utils/         # 유틸리티
-└── types.ts       # 타입 정의
-```
-
 ## ⚙️ 설정 파일
 
 - `setting.json`: 캘린더 및 리마인더 설정
-- `activity.log`: 활동 로그
-
-## 🐛 문제 해결
-
-### 권한 오류
-Calendar/Reminders 앱에 대한 접근 권한이 필요합니다
+- `activity.log`: 일정 및 작업 추가삭제 이력
 
 
 ## 📝 라이선스
