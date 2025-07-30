@@ -1,0 +1,5 @@
+{
+  "maxEvents": 1000,
+  "defaultDays": 1,
+  "maxDays": 365
+} 

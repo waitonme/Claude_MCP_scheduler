@@ -7,15 +7,23 @@ export class CalendarManager {
   private core = new CalendarCore();
 
   async init(): Promise<void> {
-    Logger.section('Calendar Manager 초기화');
-    
-    await this.core.loadConfig();
-    
-    if (this.core.needsSetup()) {
-      Logger.info('설정이 필요합니다');
-      await this.runSetup();
-    } else {
-      await this.validateConfig();
+    try {
+      await this.core.debugLog('INFO', 'Calendar Manager 초기화 시작');
+      
+      await this.core.init();
+      
+      if (this.core.needsSetup()) {
+        await this.core.debugLog('INFO', '설정이 필요함');
+        await this.runSetup();
+      } else {
+        await this.core.debugLog('INFO', '기존 설정 검증 시작');
+        await this.validateConfig();
+      }
+      
+      await this.core.debugLog('INFO', 'Calendar Manager 초기화 완료');
+    } catch (error: any) {
+      await this.core.debugLog('ERROR', 'Calendar Manager 초기화 실패', { error: error.message });
+      throw error;
     }
   }
 
@@ -35,6 +43,7 @@ export class CalendarManager {
 
       // 캘린더 선택
       if (calendars.length > 0) {
+        await this.core.debugLog('INFO', '캘린더 선택 시작', { availableCalendars: calendars });
         Logger.log('\n📅 캘린더 선택:');
         calendars.forEach((cal, i) => Logger.log(`  ${i + 1}. ${cal}`));
         Logger.log('  0. 건너뛰기');
@@ -43,12 +52,13 @@ export class CalendarManager {
         const index = parseInt(choice) - 1;
         if (index >= 0 && index < calendars.length) {
           config.scheduleCalendar = calendars[index];
-          Logger.success(`일정 캘린더: ${config.scheduleCalendar}`);
+          await this.core.debugLog('INFO', '캘린더 선택됨', { selectedCalendar: config.scheduleCalendar });
         }
       }
 
       // 리마인더 선택
       if (reminderLists.length > 0) {
+        await this.core.debugLog('INFO', '리마인더 선택 시작', { availableLists: reminderLists });
         Logger.log('\n📝 리마인더 선택:');
         reminderLists.forEach((list, i) => Logger.log(`  ${i + 1}. ${list}`));
         Logger.log('  0. 건너뛰기');
@@ -57,14 +67,14 @@ export class CalendarManager {
         const index = parseInt(choice) - 1;
         if (index >= 0 && index < reminderLists.length) {
           config.reminderCalendar = reminderLists[index];
-          Logger.success(`리마인더: ${config.reminderCalendar}`);
+          await this.core.debugLog('INFO', '리마인더 선택됨', { selectedList: config.reminderCalendar });
         }
       }
 
       if (config.scheduleCalendar || config.reminderCalendar) {
         this.core.updateConfig(config);
         await this.core.saveConfig();
-        Logger.success('설정 완료!');
+        await this.core.debugLog('INFO', '설정 완료', { config });
       }
     } finally {
       rl.close();
@@ -85,16 +95,14 @@ export class CalendarManager {
     const results = await Promise.all(tasks);
     const allValid = results.every(Boolean);
 
-    if (allValid) {
-      Logger.success('설정 유효');
-      const status = this.getConnectionStatus();
-      if (status.scheduleCalendarConnected) Logger.log(`📅 ${status.scheduleCalendarName}`);
-      if (status.reminderCalendarConnected) Logger.log(`📝 ${status.reminderCalendarName}`);
-    } else {
-      Logger.warning('설정이 무효합니다. 재설정합니다.');
-      this.core.updateConfig({});
-      await this.runSetup();
-    }
+          if (allValid) {
+        const status = this.getConnectionStatus();
+        await this.core.debugLog('INFO', '설정 유효', { status });
+      } else {
+        await this.core.debugLog('WARN', '설정이 무효함, 재설정 시작');
+        this.core.updateConfig({});
+        await this.runSetup();
+      }
   }
 
   private question(rl: readline.Interface, prompt: string): Promise<string> {
@@ -106,68 +114,243 @@ export class CalendarManager {
     return this.core.getStatus();
   }
 
-  async getTodayEvents(): Promise<CalendarEvent[]> {
-    const config = this.core.getConfig();
-    if (!config.scheduleCalendar) throw new Error('일정 캘린더 미설정');
-    return this.core.getEvents(config.scheduleCalendar, 1);
+  async getEvents(days?: number, maxEvents?: number): Promise<CalendarEvent[]> {
+    try {
+      const appConfig = this.core.getAppConfig();
+      const actualDays = days ?? appConfig.defaultDays;
+      const actualMaxEvents = maxEvents ?? appConfig.maxEvents;
+      
+      // days가 maxDays를 초과하면 maxDays로 제한
+      const limitedDays = Math.min(actualDays, appConfig.maxDays);
+      
+      await this.core.debugLog('INFO', '일정 조회 시작', { 
+        requestedDays: days, 
+        actualDays: limitedDays, 
+        requestedMaxEvents: maxEvents, 
+        actualMaxEvents: actualMaxEvents 
+      });
+      
+      const config = this.core.getConfig();
+      if (!config.scheduleCalendar) {
+        await this.core.debugLog('ERROR', '일정 캘린더 미설정');
+        throw new Error('일정 캘린더 미설정');
+      }
+      
+      const events = await this.core.getEvents(config.scheduleCalendar, limitedDays, actualMaxEvents);
+      await this.core.debugLog('INFO', '일정 조회 완료', { 
+        count: events.length, 
+        days: limitedDays, 
+        maxEvents: actualMaxEvents 
+      });
+      return events;
+    } catch (error: any) {
+      await this.core.debugLog('ERROR', '일정 조회 실패', { 
+        error: error.message, 
+        days, 
+        maxEvents 
+      });
+      throw error;
+    }
   }
 
-  async getYearEvents(maxEvents = 1000): Promise<CalendarEvent[]> {
-    const config = this.core.getConfig();
-    if (!config.scheduleCalendar) throw new Error('일정 캘린더 미설정');
-    return this.core.getEvents(config.scheduleCalendar, 365, maxEvents);
+  async getReminders(days?: number, maxReminders?: number): Promise<CalendarEvent[]> {
+    try {
+      const appConfig = this.core.getAppConfig();
+      const actualDays = days ?? appConfig.defaultDays;
+      const actualMaxReminders = maxReminders ?? appConfig.maxEvents;
+      
+      // days가 maxDays를 초과하면 maxDays로 제한
+      const limitedDays = Math.min(actualDays, appConfig.maxDays);
+      
+      await this.core.debugLog('INFO', '할일 조회 시작', { 
+        requestedDays: days, 
+        actualDays: limitedDays, 
+        requestedMaxReminders: maxReminders, 
+        actualMaxReminders: actualMaxReminders 
+      });
+      
+      const config = this.core.getConfig();
+      if (!config.reminderCalendar) {
+        await this.core.debugLog('ERROR', '리마인더 미설정');
+        throw new Error('리마인더 미설정');
+      }
+      
+      const reminders = await this.core.getReminders(config.reminderCalendar, limitedDays, actualMaxReminders);
+      await this.core.debugLog('INFO', '할일 조회 완료', { 
+        count: reminders.length, 
+        days: limitedDays, 
+        maxReminders: actualMaxReminders 
+      });
+      return reminders;
+    } catch (error: any) {
+      await this.core.debugLog('ERROR', '할일 조회 실패', { 
+        error: error.message, 
+        days, 
+        maxReminders 
+      });
+      throw error;
+    }
+  }
+
+  async getEventsAndReminders(days?: number, maxEvents?: number, maxReminders?: number): Promise<{
+    events: CalendarEvent[];
+    reminders: CalendarEvent[];
+    hasEvents: boolean;
+    hasReminders: boolean;
+  }> {
+    try {
+      await this.core.debugLog('INFO', '일정 및 할일 통합 조회 시작', { days, maxEvents, maxReminders });
+      
+      const config = this.core.getConfig();
+      const hasEvents = !!config.scheduleCalendar;
+      const hasReminders = !!config.reminderCalendar;
+      
+      const results = await Promise.allSettled([
+        hasEvents ? this.getEvents(days, maxEvents) : Promise.resolve([]),
+        hasReminders ? this.getReminders(days, maxReminders) : Promise.resolve([])
+      ]);
+      
+      const events = results[0].status === 'fulfilled' ? results[0].value : [];
+      const reminders = results[1].status === 'fulfilled' ? results[1].value : [];
+      
+      await this.core.debugLog('INFO', '일정 및 할일 통합 조회 완료', { 
+        eventsCount: events.length, 
+        remindersCount: reminders.length,
+        hasEvents,
+        hasReminders
+      });
+      
+      return {
+        events,
+        reminders,
+        hasEvents,
+        hasReminders
+      };
+    } catch (error: any) {
+      await this.core.debugLog('ERROR', '일정 및 할일 통합 조회 실패', { 
+        error: error.message, 
+        days, 
+        maxEvents, 
+        maxReminders 
+      });
+      throw error;
+    }
   }
 
   async addEvent(title: string, startDate: Date, endDate?: Date): Promise<string> {
-    const config = this.core.getConfig();
-    if (!config.scheduleCalendar) throw new Error('일정 캘린더 미설정');
-    
-    const success = await this.core.addEvent(config.scheduleCalendar, title, startDate, endDate);
-    return success ? `✅ 일정 추가됨: ${title}` : `❌ 일정 추가 실패: ${title}`;
+    try {
+      await this.core.debugLog('INFO', '일정 추가 시작', { title, startDate, endDate });
+      const config = this.core.getConfig();
+      if (!config.scheduleCalendar) {
+        await this.core.debugLog('ERROR', '일정 캘린더 미설정');
+        throw new Error('일정 캘린더 미설정');
+      }
+      
+      const success = await this.core.addEvent(config.scheduleCalendar, title, startDate, endDate);
+      const result = success ? `✅ 일정 추가됨: ${title}` : `❌ 일정 추가 실패: ${title}`;
+      await this.core.debugLog(success ? 'INFO' : 'ERROR', '일정 추가 완료', { success, title, result });
+      return result;
+    } catch (error: any) {
+      await this.core.debugLog('ERROR', '일정 추가 실패', { error: error.message, title });
+      throw error;
+    }
   }
 
   async removeEvent(title: string): Promise<string> {
-    const config = this.core.getConfig();
-    if (!config.scheduleCalendar) throw new Error('일정 캘린더 미설정');
-    
-    const result = await this.core.removeEvent(config.scheduleCalendar, title);
-    switch (result) {
-      case 'success': return `✅ 일정 삭제됨: ${title}`;
-      case 'not_found': return `⚠️ 일정을 찾을 수 없음: ${title}`;
-      default: return `❌ 일정 삭제 실패: ${title}`;
+    try {
+      await this.core.debugLog('INFO', '일정 삭제 시작', { title });
+      const config = this.core.getConfig();
+      if (!config.scheduleCalendar) {
+        await this.core.debugLog('ERROR', '일정 캘린더 미설정');
+        throw new Error('일정 캘린더 미설정');
+      }
+      
+      const result = await this.core.removeEvent(config.scheduleCalendar, title);
+      let message: string;
+      switch (result) {
+        case 'success': message = `✅ 일정 삭제됨: ${title}`; break;
+        case 'not_found': message = `⚠️ 일정을 찾을 수 없음: ${title}`; break;
+        default: message = `❌ 일정 삭제 실패: ${title}`; break;
+      }
+      
+      await this.core.debugLog('INFO', '일정 삭제 완료', { result, title, message });
+      return message;
+    } catch (error: any) {
+      await this.core.debugLog('ERROR', '일정 삭제 실패', { error: error.message, title });
+      throw error;
     }
   }
 
   async addReminder(title: string, dueDate?: Date): Promise<string> {
-    const config = this.core.getConfig();
-    if (!config.reminderCalendar) throw new Error('리마인더 미설정');
-    
-    const success = await this.core.addReminder(config.reminderCalendar, title, dueDate);
-    return success ? `✅ 리마인더 추가됨: ${title}` : `❌ 리마인더 추가 실패: ${title}`;
+    try {
+      await this.core.debugLog('INFO', '리마인더 추가 시작', { title, dueDate });
+      const config = this.core.getConfig();
+      if (!config.reminderCalendar) {
+        await this.core.debugLog('ERROR', '리마인더 미설정');
+        throw new Error('리마인더 미설정');
+      }
+      
+      const success = await this.core.addReminder(config.reminderCalendar, title, dueDate);
+      const result = success ? `✅ 리마인더 추가됨: ${title}` : `❌ 리마인더 추가 실패: ${title}`;
+      await this.core.debugLog(success ? 'INFO' : 'ERROR', '리마인더 추가 완료', { success, title, result });
+      return result;
+    } catch (error: any) {
+      await this.core.debugLog('ERROR', '리마인더 추가 실패', { error: error.message, title });
+      throw error;
+    }
   }
 
   async removeReminder(title: string): Promise<string> {
-    const config = this.core.getConfig();
-    if (!config.reminderCalendar) throw new Error('리마인더 미설정');
-    
-    const result = await this.core.removeReminder(config.reminderCalendar, title);
-    switch (result) {
-      case 'success': return `✅ 리마인더 삭제됨: ${title}`;
-      case 'not_found': return `⚠️ 리마인더를 찾을 수 없음: ${title}`;
-      default: return `❌ 리마인더 삭제 실패: ${title}`;
+    try {
+      await this.core.debugLog('INFO', '리마인더 삭제 시작', { title });
+      const config = this.core.getConfig();
+      if (!config.reminderCalendar) {
+        await this.core.debugLog('ERROR', '리마인더 미설정');
+        throw new Error('리마인더 미설정');
+      }
+      
+      const result = await this.core.removeReminder(config.reminderCalendar, title);
+      let message: string;
+      switch (result) {
+        case 'success': message = `✅ 리마인더 삭제됨: ${title}`; break;
+        case 'not_found': message = `⚠️ 리마인더를 찾을 수 없음: ${title}`; break;
+        default: message = `❌ 리마인더 삭제 실패: ${title}`; break;
+      }
+      
+      await this.core.debugLog('INFO', '리마인더 삭제 완료', { result, title, message });
+      return message;
+    } catch (error: any) {
+      await this.core.debugLog('ERROR', '리마인더 삭제 실패', { error: error.message, title });
+      throw error;
     }
   }
 
   async addTestEvent(): Promise<string> {
-    const now = new Date();
-    const title = `테스트 일정 ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
-    return this.addEvent(title, new Date(now.getTime() + 10 * 60 * 1000));
+    try {
+      await this.core.debugLog('INFO', '테스트 일정 추가 시작');
+      const now = new Date();
+      const title = `테스트 일정 ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+      const result = await this.addEvent(title, new Date(now.getTime() + 10 * 60 * 1000));
+      await this.core.debugLog('INFO', '테스트 일정 추가 완료', { title, result });
+      return result;
+    } catch (error: any) {
+      await this.core.debugLog('ERROR', '테스트 일정 추가 실패', { error: error.message });
+      throw error;
+    }
   }
 
   async addTestReminder(): Promise<string> {
-    const now = new Date();
-    const title = `테스트 리마인더 ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
-    return this.addReminder(title, new Date(now.getTime() + 2 * 60 * 60 * 1000));
+    try {
+      await this.core.debugLog('INFO', '테스트 리마인더 추가 시작');
+      const now = new Date();
+      const title = `테스트 리마인더 ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+      const result = await this.addReminder(title, new Date(now.getTime() + 2 * 60 * 60 * 1000));
+      await this.core.debugLog('INFO', '테스트 리마인더 추가 완료', { title, result });
+      return result;
+    } catch (error: any) {
+      await this.core.debugLog('ERROR', '테스트 리마인더 추가 실패', { error: error.message });
+      throw error;
+    }
   }
 } 
  

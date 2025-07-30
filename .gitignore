@@ -99,3 +99,5 @@ temp/
 # Project specific
 setting.json
 setting.json.backup.* 
+
+.cursorignore

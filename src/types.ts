@@ -3,6 +3,12 @@ export interface CalendarConfig {
   reminderCalendar?: string;
 }
 
+export interface AppConfig {
+  maxEvents: number;
+  defaultDays: number;
+  maxDays: number;
+}
+
 export interface CalendarEvent {
   title: string;
   startDate: string;
